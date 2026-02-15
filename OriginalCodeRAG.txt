@@ -1,0 +1,117 @@
+import os
+from dotenv import load_dotenv
+from langchain_huggingface import HuggingFaceEmbeddings
+# from langchain_community.embeddings import HuggingFaceEmbeddings
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_groq import ChatGroq
+from langchain_community.vectorstores import FAISS
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
+from langchain_core.output_parsers import StrOutputParser
+
+
+# ============================
+# Load Environment Variables
+# ============================
+load_dotenv()
+
+os.environ["GROQ_API_KEY"] = os.getenv("GROQ_API_KEY")
+
+# print("✅ API Key Loaded Successfully")
+
+
+# ==========================================================
+# ------(1)-- Indexing import youtube video transcript ----------
+# =========================================================
+video_id = "Gfr50f6ZBvo"
+
+try:
+    # Create API object (required in v1.2.3)
+    api = YouTubeTranscriptApi()
+
+    # Fetch transcript
+    transcript_list=api.fetch(video_id)            
+
+    # Convert transcript objects into plain text
+    transcript_data= " ".join([item.text for item in transcript_list])
+
+    print("\n✅ Transcript Extracted Successfully:\n")
+    # print(transcript_data)
+
+except TranscriptsDisabled:
+    print("❌ No captions available for this video.")
+
+#===========================================
+#---------(1.2)--------Text splitter----------
+#============================================
+splitter = RecursiveCharacterTextSplitter(chunk_size = 1000, chunk_overlap = 200)
+chunks = splitter.create_documents([transcript_data])
+# print(len(chunks))
+# print(chunks[100])
+
+#====================================================
+#-------(1.3)------Embedding---------------------
+#====================================================
+embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+vector_store = FAISS.from_documents(chunks,embeddings)
+
+# print(vector_store.index_to_docstore_id)
+
+#========================================================
+#---------Retrieval--------------
+#=======================================================
+retriever = vector_store.as_retriever(search_type="similarity",search_kargs={"k":4})
+# print(retriever)
+# print(retriever.invoke("what is deepmind"))
+
+#==========================================
+#---------Augmentation---------------------
+#==========================================
+llm=ChatGroq(
+    model="qwen/qwen3-32b"
+)
+prompt=PromptTemplate(
+    template="""
+    You are a helpful assistant.
+    Answer ONLY from the provided transcript context.
+    If the context is insufficient, just say you don't know.
+    {context}
+    question:{question}
+    """,
+    input_variables=['context','question']
+)
+
+# question="what is a deepmind"
+# retrived_docs = retriever.invoke(question)
+
+# context_text = "\n\n".join(doc.page_content for doc in retrived_docs)
+
+# final_prompt = prompt.invoke({"context":context_text,"question":question})
+#=====================================
+#----------Generation-------------
+#=======================================
+
+# print(final_prompt)
+# answer = llm.invoke(final_prompt)
+# print(answer.content)
+
+#==========================================
+#-------------Chaining---------------
+#===========================================
+def format_docs(retrived_docs):
+    context_text="\n\n".join(doc.page_content for doc in retrived_docs)
+    return context_text
+
+parallelchain = RunnableParallel({
+    'context':retriever | RunnableLambda(format_docs),
+    'question':RunnablePassthrough()
+})
+
+parser = StrOutputParser()
+
+main_chain = parallelchain | prompt | llm | parser
+
+print(main_chain.invoke("what is deep mind"))
+
