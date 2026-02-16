@@ -103,8 +103,6 @@ streamlit run app.py
 
 🌐 Live Deployment
 
-👉 https://youtube-chatbot-genai.streamlit.app/
-
 🎯 Real-World Use Cases
 
 📚 AI-powered video learning assistant
@@ -128,3 +126,4 @@ Multilingual transcript support
 Chat history and memory
 
 PDF & document upload support
+
